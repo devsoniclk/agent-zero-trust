@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-zero-trust"
+version = "0.1.0"
+description = "Formal zero-trust microsegmentation, capability-attenuated macaroon delegation tokens, inter-tier RPC firewalls, and quarantine circuit breakers for autonomous AI agent swarms."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+authors = [
+    { name = "Lakshitha Dananjaya", email = "dananjayarox01@gmail.com" }
+]
+keywords = [
+    "ai-agents",
+    "autonomous-agents",
+    "zero-trust",
+    "microsegmentation",
+    "macaroons",
+    "biscuits",
+    "cybersecurity",
+    "firewall",
+    "circuit-breaker",
+    "mcp"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "click>=8.0.0",
+    "rich>=12.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+agent-zero-trust = "agent_zero_trust.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_zero_trust"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
