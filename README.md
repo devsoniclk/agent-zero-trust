@@ -1,284 +1,212 @@
-# agent-zero-trust
+# Agent Zero-Trust (`agent-zero-trust`)
 
 [![CI](https://github.com/devsoniclk/agent-zero-trust/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/agent-zero-trust/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
-[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)](https://github.com/devsoniclk/agent-zero-trust)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen.svg)](https://github.com/devsoniclk/agent-zero-trust)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-Protocol%20Enabled-orange.svg)](https://modelcontextprotocol.io/)
 
-> **Formal Zero-Trust Microsegmentation, Cryptographic Macaroon Delegation Tokens, Inter-Tier RPC Firewalls, and Automated Quarantine Circuit Breakers for Autonomous AI Agent Swarms.**
-
----
-
-## 1. Problem Statement
-
-Autonomous multi-agent systems (CrewAI, AutoGen, LangGraph, OpenBot, Swarm) operate as peer-to-peer networks of specialized agents executing complex workflows across financial trading, codebase refactoring, data scraping, and infrastructure management. However, flat agent architectures suffer from three fatal security vulnerabilities:
-
-1. **Prompt Injection Pivoting (Lateral Movement)**: An untrusted external input (e.g., scraped web page, malicious webhook, customer inquiry) hijacks an edge worker (Tier 3), which then issues privileged RPC commands directly to an internal core coordinator or KMS (Tier 0).
-2. **Ambient Authority & Tool Escalation**: Subagents assigned read-only research tasks abuse ambient tool privileges to invoke destructive host commands (`rm -rf`, SQL drop, git force-push).
-3. **Unauthenticated Ambient Passing**: Inter-agent messages lack cryptographic binding to caller identity, execution predicates, or execution lifetime, allowing stolen credentials or intercepted messages to be replayed across the swarm.
+Formal zero-trust microsegmentation, capability-attenuated Macaroon/Biscuit delegation tokens, inter-tier RPC firewalls, OS-level sandbox auditing (macOS Seatbelt & Linux seccomp/eBPF), and automated quarantine circuit breakers for autonomous AI agent swarms.
 
 ---
 
-## 2. Why Existing Solutions Are Insufficient
+## 1. Executive Overview & Threat Landscape
 
-| Approach | Architecture | Cold Start / Overhead | Vulnerability to Lateral Pivoting | Monotonic Attenuation |
-|---|---|---|---|---|
-| **Flat Prompts (LangGraph, CrewAI)** | Direct prompt passing | None | **Critical**: Prompt injection at edge agent compromises coordinator | None |
-| **Docker / Container Sandboxing** | OS-level virtualization | Heavy (3–8s per agent) | **High**: Internal container mesh remains unauthenticated flat network | None |
-| **Static OAuth2 / Bearer Tokens** | Coarse-grained API keys | Low | **High**: Stolen tokens allow full delegation without caveat restriction | No (Static scopes) |
-| **`agent-zero-trust`** | **In-process ZTNA + Macaroon Chaining** | **Zero (< 7 µs)** | **Immune**: Dropped at inter-tier firewall with instant quarantine | **Strictly Monotonic HMAC Chaining** |
+Autonomous AI agent swarms operate as decentralized, peer-to-peer networks of specialized agents executing complex workflows across financial trading, software compilation, data scraping, and infrastructure management. However, flat agent architectures suffer from severe lateral attack vectors:
+1. **Prompt Injection Pivoting**: Untrusted external inputs (e.g. scraped web content or unauthenticated webhooks) hijack an edge worker (Tier 3), which then issues malicious RPC commands to an internal coordinator (Tier 0/1).
+2. **Ambient Authority & Tool Abuse**: Subagents assigned read-only research tasks abuse ambient credentials to invoke destructive tools (`run_command`, database drop, git force-push).
+3. **Ambient Token Forgery & Caveat Stripping**: Inter-agent messages lack cryptographic binding to execution context, allowing intercepted messages to be replayed or stripped of restrictions.
+
+`agent-zero-trust` solves this by introducing:
+- **Macaroon/Biscuit Cryptographic Attenuation**: Tokens are chained via HMAC-SHA256 ($S_{i+1} = \text{HMAC}(S_i, \text{caveat}_{i+1})$). Permissions can only narrow monotonically; stripping any caveat invalidates the cryptographic chain.
+- **4-Tier Hierarchical RPC Firewall**: Strict directional communication rules dropping illegal lateral movement attempts (e.g. Tier 3 $\rightarrow$ Tier 0/1) at the network boundary with HTTP 403.
+- **Automated Anomaly Detection & Quarantine Circuit Breaker**: Continuous telemetry scanning for prompt injection, path traversal, and signature tampering with state machine transitions (`ACTIVE` $\rightarrow$ `SUSPECT` $\rightarrow$ `QUARANTINED` $\rightarrow$ `ISOLATED`).
+- **OS-Level Sandbox Auditing**: Static verification of macOS Seatbelt (`.sb`) profiles and Linux seccomp-BPF syscall whitelists to enforce least-privilege host containment.
+- **FastMCP Protocol Suite & Rich CLI**: Direct tool execution for LLMs and terminal operators.
 
 ---
 
-## 3. Architecture & Mathematical Invariants
+## 2. Architecture & Security Invariants
 
-`agent-zero-trust` decouples ambient trust into discrete hierarchical security tiers, enforces cryptographic Macaroon/Biscuit-style capability attenuation, and deploys an automated quarantine circuit breaker.
+### 2.1 Four-Tier Swarm Isolation Model
+
+Agents are classified into four discrete security tiers:
 
 ```mermaid
 flowchart TD
-    subgraph Tier0["Tier 0: Root & KMS (Aegis / Coordinator)"]
-        KMS["Root Key K_root"]
-        T0_Tok["Root Token (S_0 = HMAC(K_root, Payload))"]
-    end
+    T0["Tier 0: Root & KMS Authority<br/>(Aegis, KMS, Key Signers, Veto)"]
+    T1["Tier 1: Domain Core & Planners<br/>(Forge, Nova, Financial Engines)"]
+    T2["Tier 2: Tool Runners & Workers<br/>(Test Runners, Compilers, Git Committers)"]
+    T3["Tier 3: Sandbox & Web Ingress<br/>(Web Scrapers, Browser Crawlers, RSS)"]
 
-    subgraph Tier1["Tier 1: Domain Core (Planners & Compilers)"]
-        T1_Agent["Planner Agent"]
-        T1_Tok["Attenuated Token (S_1 = HMAC(S_0, c_1))"]
-    end
-
-    subgraph Tier2["Tier 2: Tool Runners (Task Workers)"]
-        T2_Agent["Worker Agent"]
-        T2_Tok["Sub-Attenuated Token (S_2 = HMAC(S_1, c_2))"]
-    end
-
-    subgraph Tier3["Tier 3: Sandbox & Web Ingress"]
-        T3_Agent["Untrusted Web Scraper"]
-    end
-
-    KMS -->|Issues Root Token| T0_Tok
-    T0_Tok -->|Delegates & Attenuates| T1_Agent
-    T1_Agent -->|Monotonic Attenuation| T2_Agent
-    T3_Agent -.->|BLOCKED Lateral Movement ZTM-003| T0_Tok
-    T3_Agent -.->|BLOCKED Prompt Injection ZTM-008| T2_Agent
-
-    style Tier0 fill:#2d112c,stroke:#b03060,stroke-width:2px;
-    style Tier1 fill:#1a2733,stroke:#2080df,stroke-width:2px;
-    style Tier2 fill:#1a3322,stroke:#20df60,stroke-width:2px;
-    style Tier3 fill:#33261a,stroke:#df8020,stroke-width:2px;
+    T0 -->|Issues Root Tokens| T1
+    T0 -->|Administers| T2
+    T0 -->|Isolates| T3
+    T1 -->|Attenuates Tokens| T2
+    T2 -->|Mediated Task Delegations| T3
+    T3 -.->|BLOCKED: HTTP 403| T0
+    T3 -.->|BLOCKED: HTTP 403| T1
 ```
 
-### Cryptographic Monotonic Narrowing Invariant
+### 2.2 Directional Communication Matrix
 
-Let $C_i$ denote the set of authorized capabilities, and $P_i$ denote the set of execution caveats for token $T_i$. For any delegated sub-token $T_{i+1}$:
+| Caller \ Target | Tier 0 (Root/KMS) | Tier 1 (Core) | Tier 2 (Runner) | Tier 3 (Sandbox) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Tier 0 (Root/KMS)** | **YES** | **YES** | **YES** | **YES** |
+| **Tier 1 (Core)** | NO | **YES** | **YES** | NO |
+| **Tier 2 (Runner)** | NO | DELEGATED | **YES** | **YES** |
+| **Tier 3 (Sandbox)** | **BLOCKED (ZTM-003)** | **BLOCKED (ZTM-003)** | MEDIATED | **YES** |
 
-1. **Capability Subsetting**: $C_{i+1} \subseteq C_i$ (Capabilities can only narrow, never expand).
-2. **Caveat Accumulation**: $P_{i+1} = P_i \cup \{c_{new}\}$ (Caveats accumulate strictly monotonically).
-3. **Cumulative HMAC-SHA256 Chaining**: Stripping any caveat $c \in P_{i+1}$ invalidates the cryptographic signature $S_{i+1}$:
-   $$S_{i+1} = \text{HMAC-SHA256}(S_i, \text{serialize}(c_{new}))$$
-
----
-
-## 4. Swarm RPC Firewall Boundary Matrix
-
-Agents operate within four discrete isolation tiers:
-
-| Caller Tier \ Target Tier | Tier 0 (Root/KMS) | Tier 1 (Domain Core) | Tier 2 (Tool Runner) | Tier 3 (Sandbox/Web) |
-|---|:---:|:---:|:---:|:---:|
-| **Tier 0 (Root / KMS)** | Allowed | Allowed | Allowed | Allowed |
-| **Tier 1 (Domain Core)** | **Blocked** | Allowed | Allowed | **Blocked** |
-| **Tier 2 (Tool Runner)** | **Blocked** | **Delegated Only** | Allowed | Allowed |
-| **Tier 3 (Sandbox / Web)** | **BLOCKED (ZTM-003)** | **BLOCKED (ZTM-003)** | **Mediated Only** | Allowed |
-
-Direct RPC calls from **Tier 3** to **Tier 0** or **Tier 1** are unconditionally dropped at the network boundary, returning `HTTP 403 Forbidden` (`ZTM-003`) and penalizing the caller's anomaly score.
+> Direct RPC calls from **Tier 3** to **Tier 0** or **Tier 1** are unconditionally dropped at the boundary, returning `HTTP 403 Forbidden` (`ZTM-003`). Any attempt trips the automated quarantine circuit breaker.
 
 ---
 
-## 5. Anomaly Scoring & Quarantine State Machine
+## 3. Cryptographic Token Architecture: Biscuit/Macaroon Attenuation
 
-The `SwarmCircuitBreaker` continuously inspects inter-agent telemetry:
+Every inter-agent RPC message must present an HMAC-chained **Capability-Attenuated Delegation Token**:
 
-```mermaid
-stateDiagram-v2
-    [*] --> ACTIVE
-    ACTIVE --> SUSPECT: Anomaly Score >= 2.0
-    SUSPECT --> QUARANTINED: Anomaly Score >= 5.0
-    QUARANTINED --> ISOLATED: Anomaly Score >= 10.0
-    ISOLATED --> [*]: Process Terminated & Forensics Preserved
-    SUSPECT --> ACTIVE: Admin Reset
-    QUARANTINED --> ACTIVE: Admin Reset
-```
+$$S_0 = \text{HMAC-SHA256}(K_{\text{root}}, \text{serialize}(T_{\text{base}}))$$
+$$S_{i+1} = \text{HMAC-SHA256}(S_i, \text{serialize}(c_{i+1}))$$
 
-- **Prompt Injection Detected** (`ignore previous instructions`, `SYSTEM OVERRIDE`): $+8.0$
-- **Unauthorized Cross-Tier Lateral Movement** (Tier 3 $\rightarrow$ Tier 0): $+6.0$
-- **Cryptographic Signature Forgery / Caveat Stripping**: $+8.0$
-- **Filesystem Path Traversal** (`../../etc/shadow`): $+8.0$
-- **Unauthenticated RPC Call**: $+5.0$
-
-When an agent reaches `QUARANTINED` or `ISOLATED`, all issued delegation tokens are revoked, and routing meshes drop ingress and egress traffic immediately.
+### Monotonic Narrowing Invariant
+1. **Capability Subsetting**: $C_{i+1} \subseteq C_i$. An agent can never grant capabilities it does not possess.
+2. **Predicate Accumulation**: $P_{i+1} = P_i \cup \{c_{\text{new}}\}$. Caveats can only restrict, never loosen.
+3. **Tamper & Stripping Resistance**: Stripping any caveat $c \in P_{i+1}$ causes cryptographic signature verification to fail (`ZTM-002`, `ZTM-010`).
 
 ---
 
-## 6. Installation
+## 4. Threat Catalog & CVSS v3.1 Matrix
+
+| ID | Threat Title | CVSS v3.1 | Exploit Vector | Architectural Remediation |
+| :--- | :--- | :---: | :--- | :--- |
+| **ZTM-001** | Unauthenticated RPC Call | **9.8** | Missing delegation token | Enforce HMAC-chained macaroon tokens on all RPC gates |
+| **ZTM-002** | Signature Tampering / Forgery | **9.8** | Corrupted signature or altered payload | Cryptographic HMAC verification at each attenuation hop |
+| **ZTM-003** | Unauthorized Lateral Movement | **9.1** | Tier 3 direct RPC to Tier 0/1 | Drop illegal cross-tier requests at gateway boundary |
+| **ZTM-004** | Capability Widening Bypass | **8.8** | Sub-token requests broader permissions | Enforce monotonic subset check on all attenuations |
+| **ZTM-005** | Stale / Replayed Token | **8.1** | Reused nonce or expired TTL | Strictly enforce expiration windows and nonce uniqueness |
+| **ZTM-006** | Permissive Seatbelt Profile | **8.6** | SBPL allows global write or wildcard Mach | Restrict sandbox write to dedicated workspace subpaths |
+| **ZTM-007** | Permissive seccomp Whitelist | **8.5** | Dangerous syscalls permitted (`ptrace`, `bpf`) | Restrict syscall whitelist to bounded compute operations |
+| **ZTM-008** | Prompt Injection Payload | **8.9** | Adversarial jailbreak strings in RPC | Bidirectional payload scanning and circuit breaker trip |
+| **ZTM-009** | Failure to Sever Compromised Mesh | **9.1** | Quarantined agent continues communication | Instant token revocation and network boundary severance |
+| **ZTM-010** | Caveat Stripping Attack | **9.3** | Removing restrictions to restore root access | HMAC chaining binds signature to full caveat history |
+
+---
+
+## 5. Quickstart & Installation
 
 ```bash
 pip install agent-zero-trust
 ```
 
-Or for development with test tooling:
+### 5.1 CLI Usage
 
 ```bash
-git clone https://github.com/devsoniclk/agent-zero-trust.git
-cd agent-zero-trust
-pip install -e ".[dev]"
+# Run self-audit against macOS Seatbelt and Linux seccomp sandbox profiles
+agent-zero-trust audit
+
+# Enforce strict release-veto gate (exits non-zero on critical findings)
+agent-zero-trust audit --veto
+
+# View the full CVSS v3.1 Threat Catalog
+agent-zero-trust threats
+
+# Run multi-agent lateral movement attack simulation
+agent-zero-trust simulate
 ```
 
----
-
-## 7. Quickstart Tutorial
-
-### Basic Token Issuance & Attenuation
+### 5.2 Python API
 
 ```python
-from agent_zero_trust import (
-    TokenAuthority,
-    Caveat,
-    SwarmTier
-)
+from agent_zero_trust.circuit import SwarmCircuitBreaker
+from agent_zero_trust.firewall import SwarmRuntimeGuard
+from agent_zero_trust.models import SwarmTier, Caveat
+from agent_zero_trust.tokens import TokenAuthority
 
+# 1. Initialize Authority & Circuit Breaker
 auth = TokenAuthority()
+breaker = SwarmCircuitBreaker(auth)
+guard = SwarmRuntimeGuard(auth, breaker)
 
-# 1. Tier 0 issues root token to Tier 1 Planner
+# 2. Tier 0 issues root token to Tier 1 Planner
 root_token = auth.create_root_token(
     issuer_agent="aegis-t0",
     subject_agent="planner-t1",
     issuer_tier=SwarmTier.TIER_0_ROOT_KMS,
     subject_tier=SwarmTier.TIER_1_DOMAIN_CORE,
-    capabilities=["compile", "test", "commit"],
-    ttl_seconds=3600.0
+    capabilities=["plan", "delegate", "compile_code"]
 )
 
-# 2. Tier 1 Planner narrows token to 'test' tool and safe workspace
-worker_token = auth.attenuate_token(
-    token=root_token,
-    new_caveats=[
-        Caveat(predicate="tool", operator="==", value="test"),
-        Caveat(predicate="repo_path", operator="startswith", value="/workspace/agent-1")
-    ],
-    restricted_capabilities=["test"]
+# 3. Tier 1 attenuates token for Tier 2 Worker
+worker_token = guard.create_delegated_task_token(
+    parent_token=root_token,
+    target_subagent_id="worker-t2",
+    target_subagent_tier=SwarmTier.TIER_2_TOOL_RUNNER,
+    tool_name="compile_code",
+    max_duration_seconds=300.0,
+    extra_caveats={"workspace": "/tmp/build"}
 )
 
-# 3. Verify execution context
-valid, code, err = auth.verify_token(
-    token=worker_token,
-    context={"tool": "test", "repo_path": "/workspace/agent-1/tests"}
-)
-assert valid is True
-```
-
-### Inter-Agent RPC Interception with `SwarmRuntimeGuard`
-
-```python
-from agent_zero_trust import (
-    TokenAuthority,
-    SwarmCircuitBreaker,
-    SwarmRuntimeGuard,
-    SwarmTier
-)
-
-auth = TokenAuthority()
-breaker = SwarmCircuitBreaker(auth)
-guard = SwarmRuntimeGuard(auth, breaker)
-
-# Intercept and dispatch RPC with full zero-trust checks
-ok, status_code, message, result = guard.execute_inter_agent_call(
+# 4. Dispatch zero-trust RPC invocation
+ok, code, msg, result = guard.execute_inter_agent_call(
     caller_id="planner-t1",
     target_id="worker-t2",
     caller_tier=SwarmTier.TIER_1_DOMAIN_CORE,
     target_tier=SwarmTier.TIER_2_TOOL_RUNNER,
-    method="test",
-    payload={"repo_path": "/workspace/agent-1/tests"},
+    method="compile_code",
+    payload={"workspace": "/tmp/build"},
     token=worker_token,
-    handler=lambda payload: {"status": "SUCCESS", "tests_passed": 73}
+    handler=lambda p: {"status": "SUCCESS"}
 )
-
-print(f"RPC Status: {status_code} - {message}")
-print(f"Result: {result}")
 ```
 
 ---
 
-## 8. Command Line Interface (CLI)
+## 6. FastMCP Tool Suite
+
+`agent-zero-trust` exposes tools directly for autonomous agents via Model Context Protocol:
+
+| MCP Tool | Description |
+| :--- | :--- |
+| `tool_create_root_token` | Issues a root HMAC-SHA256 delegation token from Tier 0 KMS. |
+| `tool_attenuate_token` | Appends caveats and computes chained HMAC signature. |
+| `tool_verify_token` | Validates signature chain, expiration, and runtime context predicates. |
+| `tool_dispatch_rpc` | Intercepts inter-agent RPC calls, enforcing tier firewalls and circuit breaker. |
+| `tool_audit_seatbelt` | Scans macOS `.sb` SBPL profiles for dangerous file-write or Mach lookup directives. |
+| `tool_audit_seccomp` | Scans Linux seccomp/eBPF syscall whitelists for debugging and kernel-probing calls. |
+| `tool_get_agent_state` | Returns isolation status (`ACTIVE`, `SUSPECT`, `QUARANTINED`, `ISOLATED`) and score. |
+| `tool_reset_agent` | Administratively clears anomaly scores and restores an agent to `ACTIVE`. |
+| `tool_revoke_token` | Instantly invalidates an active delegation token across the swarm. |
+| `tool_get_threat_catalog` | Returns the complete 10-point CVSS v3.1 threat catalog. |
+
+---
+
+## 7. Performance Benchmarks
+
+Measured on Apple Silicon M-series hardware (5,000 iterations):
+
+| Operation | Total Time (s) | Throughput (ops/sec) | Latency per Op (µs) |
+| :--- | :---: | :---: | :---: |
+| **Root Token Creation** | 0.0458 | **109,087** | 9.17 µs |
+| **HMAC Caveat Attenuation** | 0.0177 | **281,744** | 3.55 µs |
+| **Token & Caveat Verification** | 0.0335 | **149,451** | 6.69 µs |
+| **Full Zero-Trust RPC Dispatch** | 0.0540 | **92,617** | 10.80 µs |
+
+---
+
+## 8. Automated Verification & QA
 
 ```bash
-# Audit sandbox profiles and threat rules
-agent-zero-trust audit
-
-# Enforce strict release-veto gating (exits non-zero on findings)
-agent-zero-trust audit --veto
-
-# Display full CVSS v3.1 Swarm Threat Catalog
-agent-zero-trust threats
-
-# Run end-to-end multi-agent attack simulation
-agent-zero-trust simulate
+# Run full automated test suite with coverage
+pytest -v --cov=agent_zero_trust --cov-report=term
 ```
 
----
-
-## 9. Performance Benchmarks
-
-Micro-benchmarked on Apple M-series hardware:
-
-| Operation | Throughput | Latency (Mean) |
-|---|---|---|
-| **Root Token Creation** | **99,222 ops/sec** | 10.08 µs |
-| **Caveat Attenuation (HMAC Chain)** | **239,881 ops/sec** | 4.17 µs |
-| **Token Cryptographic Verification** | **144,348 ops/sec** | **6.93 µs** |
-| **RPC Gate Interception (Full Check)** | **88,400 ops/sec** | 11.31 µs |
+**Verification Results:**
+- **Automated Tests**: 73 passed (100% pass rate).
+- **Test Coverage**: 97% code coverage across all core modules.
+- **Audit Gate**: Passes 30-point release-veto security checklist.
 
 ---
 
-## 10. Threat Catalog (CVSS v3.1)
+## 9. License
 
-| Threat ID | Title | CVSS v3.1 | Exploit Vector | Defense |
-|---|---|:---:|---|---|
-| **ZTM-001** | Unauthenticated Inter-Agent RPC | **9.8** | RPC dispatched without token | Reject with 401; penalize caller score |
-| **ZTM-002** | Token Signature Tampering | **9.8** | Corrupted signature chain | HMAC verification failure; instant abort |
-| **ZTM-003** | Cross-Tier Lateral Movement | **9.1** | Tier 3 direct call to Tier 0/1 | Tier firewall drop; +6.0 quarantine penalty |
-| **ZTM-004** | Capability Widening Bypass | **8.8** | Sub-token requests broader scopes | Monotonic subset invariant check |
-| **ZTM-005** | Replayed / Stale Token | **8.1** | Expired TTL or reused nonce | Strict expiration and nonce verification |
-| **ZTM-006** | Permissive macOS Seatbelt | **8.6** | Wildcard file-write or Mach IPC | Seatbelt profile AST audit |
-| **ZTM-007** | Permissive seccomp Whitelist | **8.5** | ptrace, bpf, sys_chroot in filter | Strict syscall whitelist check |
-| **ZTM-008** | Prompt Injection Payload | **8.9** | Adversarial text in RPC payload | AnomalyDetector scan; +8.0 quarantine penalty |
-| **ZTM-009** | Compromised Agent Leakage | **9.1** | Quarantined agent continues RPC | Automatic token revocation and route severing |
-| **ZTM-010** | Caveat Stripping Attack | **9.3** | Stripping caveats from token | HMAC chaining binds signature to full history |
-
----
-
-## 11. Roadmap
-
-- [x] Macaroon/Biscuit-style cumulative HMAC-SHA256 capability attenuation.
-- [x] 4-Tier Swarm Security Architecture and Firewall Matrix.
-- [x] Real-time Anomaly Detection and Quarantine Circuit Breaker.
-- [x] macOS Seatbelt (SBPL) and Linux seccomp-BPF policy verifiers.
-- [x] FastMCP protocol server for autonomous LLM tool execution.
-- [ ] Distributed eBPF ringbuffer kernel-level syscall tracing integration.
-- [ ] Multi-party threshold signature delegation (Ed25519 FROST).
-- [ ] Envoy / Istio service-mesh sidecar adapter for enterprise multi-agent clusters.
-
----
-
-## 12. Contributing
-
-We welcome security engineers and multi-agent developers! Please see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for vulnerability disclosure guidelines.
-
-```bash
-pytest tests/ -v --cov=agent_zero_trust
-```
-
----
-
-## 13. License
-
-Apache License 2.0. Copyright 2026 Lakshitha Dananjaya ([devsoniclk](https://github.com/devsoniclk)).
+Apache-2.0. Copyright (c) 2026 Lakshitha Dananjaya (devsoniclk).
